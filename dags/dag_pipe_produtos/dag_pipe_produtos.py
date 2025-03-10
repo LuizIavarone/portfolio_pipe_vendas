@@ -2,6 +2,9 @@
 
 from airflow import DAG
 from airflow.operators.python_operator import PythonOperator
+from airflow.operators.dummy_operator import DummyOperator
+from airflow.providers.slack.operators.slack_webhook import SlackWebhookOperator
+from airflow.utils.trigger_rule import TriggerRule
 from airflow.utils.task_group import TaskGroup
 from datetime import datetime
 import requests
@@ -86,7 +89,7 @@ def inserir_no_bigquery(json_produtos, dataset_id_raw, tabela_id_raw):
     # Renomeando as colunas que possuem nomes compostos
     df.columns = df.columns.str.replace('rating.rate', 'rating_rate', regex=False)
     df.columns = df.columns.str.replace('rating.count', 'rating_count', regex=False)
-    
+
     # Convertendo colunas para STRING para corresponder ao esquema do BigQuery
     df = df.astype({
         'id': 'string',  
@@ -111,6 +114,33 @@ def inserir_no_bigquery(json_produtos, dataset_id_raw, tabela_id_raw):
     logging.info(f"✅ Dados inseridos com sucesso na tabela {dataset_id_raw}.{tabela_id_raw}")
 
 
+def enviar_notificacao_slack(task_status, **kwargs):
+    """
+    Envia uma notificação para o Slack com o status da execução da task.
+
+    Args:
+        task_status (str): Status da task (ex: "sucesso" ou "falha").
+        **kwargs: Argumentos adicionais.
+    """
+    dag_name = kwargs.get('dag').dag_id
+    task_name = kwargs.get('task_instance').task_id
+    execution_date = kwargs.get('execution_date')
+
+    # Mensagem a ser enviada para o Slack
+    if task_status == "sucesso":
+        mensagem = f"✅ A dag_pipe_produtos foi executada com sucesso!\nExecução: {execution_date}"
+    else:
+        mensagem = f"❌ A dag_pipe_produtos falhou!\nExecução: {execution_date}"
+
+    # Usando o SlackWebhookOperator para enviar a mensagem
+    slack_notification = SlackWebhookOperator(
+        task_id="slack_notification",
+        slack_webhook_conn_id="slack_default",  # Você deve ter configurado essa conexão no Airflow com o webhook do Slack
+        message=mensagem,
+        channel="#notificação-vendas"
+    )
+
+    return slack_notification.execute(context=kwargs)
 
 #endregion
 
@@ -129,6 +159,16 @@ with DAG(
     default_args=default_args,
     schedule_interval=None
 ) as dag:
+
+    #region Dummys
+    inicio_dag = DummyOperator(
+        task_id="inicio_dag"
+    )
+
+    fim_dag = DummyOperator(
+        task_id="fim_dag"
+    )
+    #endregion
 
     #region RAW
     # Criando um TaskGroup chamado "raw"
@@ -149,11 +189,38 @@ with DAG(
                 'dataset_id_raw': variavel_camada_raw, 
                 'tabela_id_raw': variavel_tabela_escrita_raw,
                 'json_produtos': '{{ task_instance.xcom_pull(task_ids="raw.python_extracao_dados_produtos", key="json_produtos") }}'
-            }
+            },
+            trigger_rule=TriggerRule.ALL_SUCCESS
         )
 
         # Fluxo de execução entre as tasks
         python_extracao_dados_produtos >> python_inserir_bigquery
+    #endregion
+
+    #region Slack Notificacao
+    with TaskGroup("slack") as slack:
+        # Task de sucesso
+        success_task = PythonOperator(
+            task_id="success_task",
+            python_callable=enviar_notificacao_slack,
+            op_kwargs={'task_status': 'sucesso'},
+            trigger_rule=TriggerRule.ALL_SUCCESS
+        )
+
+        # Task de falha
+        failure_task = PythonOperator(
+            task_id="failure_task",
+            python_callable=enviar_notificacao_slack,
+            op_kwargs={'task_status': 'falha'},
+            trigger_rule=TriggerRule.ONE_FAILED
+        )
+
+    #endregion
+
+    #region Fluxo
+
+    inicio_dag >> raw >> [success_task, failure_task] >> fim_dag
+
     #endregion
 
 #endregion
