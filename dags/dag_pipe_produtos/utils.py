@@ -6,7 +6,20 @@ import subprocess
 
 #endregion
 
-def run_dbt(target,tabela_teste):
+def run_dbt_test(tabela_teste):
+    """
+        Executa o ambiente DBT
+
+        Parâmetros:
+            tabela_teste (str): Nome da tabela para testes.
+        
+        Retorno:
+            Sem retorno, a execucao iniciar o projeto DBT para execucao.
+    """
+    command = f"bash -c 'source /home/admin/airflow_env/bin/activate && cd /home/admin/Projetos/pipe_vendas/dbt_pipe_vendas && dbt test --models {tabela_teste}'"
+    subprocess.run(command, shell=True, check=True)
+
+def run_dbt_tranformacao(models,target):
     """
         Executa o ambiente DBT
 
@@ -16,7 +29,8 @@ def run_dbt(target,tabela_teste):
         Retorno:
             Sem retorno, a execucao iniciar o projeto DBT para execucao.
     """
-    command = f"bash -c 'source /home/admin/airflow_env/bin/activate && cd /home/admin/Projetos/pipe_vendas/dbt_pipe_vendas && dbt run --target {target} && dbt test --models {tabela_teste}'"
+    command = f"bash -c 'source /home/admin/airflow_env/bin/activate && cd /home/admin/Projetos/pipe_vendas/dbt_pipe_vendas && dbt run --models {models} --target {target}'"
+
     subprocess.run(command, shell=True, check=True)
 
 def get_variable(file_name, deserialize_json=False):
