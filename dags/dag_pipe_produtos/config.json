@@ -1,0 +1,10 @@
+{
+    "camadas":[
+        "raw",
+        "trusted",
+        "refined"
+    ],
+    "caminho_api":"https://fakestoreapi.com/products",
+    "tabela_escrita_raw":"tb_raw_products",
+    "GOOGLE_APPLICATION_CREDENTIALS":"/home/admin/Projetos/pipe_vendas/acess/acess.json"
+}
