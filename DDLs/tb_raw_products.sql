@@ -5,6 +5,7 @@ CREATE OR REPLACE TABLE `portfolio-440702.raw.tb_raw_products` (
   description STRING,
   category STRING,
   image STRING,
-  rating STRING,
-  dt_processamento DATETIME
+  rating_rate STRING,
+  rating_count STRING,
+  dt_processamento STRING
 );

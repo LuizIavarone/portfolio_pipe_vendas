@@ -9,6 +9,10 @@ import pandas as pd
 import json
 from dag_pipe_produtos import utils
 from google.cloud import bigquery
+import google.auth
+from airflow.utils.dates import days_ago
+import logging
+import ast
 
 # endregion
 
@@ -23,11 +27,13 @@ variavel_camada_trusted = env_var["camadas"][1]
 variavel_camada_refined = env_var["camadas"][2]
 variavel_tabela_escrita_raw = env_var["tabela_escrita_raw"]
 
+credentials, project = google.auth.load_credentials_from_file(variavel_acesso)
+
 # endregion
 
 #region Funcoes para apoio
 
-def extracao_api(caminho_api):
+def extracao_api(caminho_api, **kwargs):
     """
     Faz a conexão e extração dos produtos da API FakeStore.
 
@@ -47,50 +53,64 @@ def extracao_api(caminho_api):
     for produto in json_produtos:
         produto['dt_processamento'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
+    logging.info(f"Conteúdo de json_produtos: {json_produtos}")
+
+    # Armazenando o valor no XCom para ser recuperado por outra task
+    kwargs['ti'].xcom_push(key='json_produtos', value=json_produtos)
+
     # Retorno dos dados em formato JSON
     return json_produtos
 
 def inserir_no_bigquery(json_produtos, dataset_id_raw, tabela_id_raw):
     """
-    Envia os dados do JSON para o BigQuery.
+    Insere os dados de produtos no BigQuery.
 
-    Parâmetros:
-        json_produtos (dict): Dados dos produtos extraídos em formato JSON.
-        dataset_id_raw (str): Nome do dataset no BigQuery.
-        tabela_id_raw (str): Nome da tabela no BigQuery.
-    
-    Retorno:
-        Notificação de sucesso.
+    Args:
+        json_produtos (dict): Os dados dos produtos extraídos da API.
+        dataset_id_raw (str): O nome do dataset no BigQuery onde os dados serão inseridos.
+        tabela_id_raw (str): O nome da tabela no BigQuery onde os dados serão inseridos.
+
+    Raises:
+        ValueError: Se os dados estiverem vazios ou ocorrerem erros na inserção no BigQuery.
     """
-    # Cria uma instância do cliente BigQuery
-    client = bigquery.Client.from_service_account_json(variavel_acesso)
 
-    # Defina o nome do dataset e tabela do BigQuery
-    dataset_id = 'portfolio-440702.' + dataset_id_raw
-    table_id = tabela_id_raw
+    # Substitui as chaves que têm aspas extras e as corrige
+    data_string = json_produtos.replace("'id'", '"id"').replace("'title'", '"title"').replace("'price'", '"price"').replace("'description'", '"description"').replace("'category'", '"category"').replace("'image'", '"image"').replace("'rating'", '"rating"').replace("'dt_processamento'", '"dt_processamento"')
+    
+    # Usando ast.literal_eval para transformar a string em uma lista de dicionários
+    json_produtos = ast.literal_eval(data_string)
 
-    # Converte o JSON para um DataFrame
-    df_produtos = pd.DataFrame(json_produtos)
+    # Converte o JSON em um DataFrame
+    df = pd.json_normalize(json_produtos)
 
-    # Carregar os dados do DataFrame para o BigQuery
-    job_config = bigquery.LoadJobConfig(
-        schema=[
-            bigquery.SchemaField("id", "STRING"),
-            bigquery.SchemaField("title", "STRING"),
-            bigquery.SchemaField("price", "STRING"),
-            bigquery.SchemaField("description", "STRING"),
-            bigquery.SchemaField("category", "STRING"),
-            bigquery.SchemaField("image", "STRING"),
-            bigquery.SchemaField("rating", "STRING"),
-            bigquery.SchemaField("dt_processamento", "DATETIME"),
-        ],
-        write_disposition="WRITE_APPEND",
-    )
+    # Renomeando as colunas que possuem nomes compostos
+    df.columns = df.columns.str.replace('rating.rate', 'rating_rate', regex=False)
+    df.columns = df.columns.str.replace('rating.count', 'rating_count', regex=False)
+    
+    # Convertendo colunas para STRING para corresponder ao esquema do BigQuery
+    df = df.astype({
+        'id': 'string',  
+        'price': 'string',  
+        'rating_rate': 'string',
+        'rating_count': 'string',
+        'dt_processamento': 'string'
+    })
 
-    # Carregar os dados para o BigQuery
-    client.load_table_from_dataframe(df_produtos, f'{dataset_id}.{table_id}', job_config=job_config).result()
+    # Autenticação com BigQuery
+    client = bigquery.Client(credentials=credentials, project=project)
 
-    print(f'Dados inseridos com sucesso na tabela {dataset_id}.{table_id}')
+    # Define a referência da tabela
+    tabela_ref = client.dataset(dataset_id_raw).table(tabela_id_raw)
+
+    # Insere o DataFrame no BigQuery
+    job = client.load_table_from_dataframe(df, tabela_ref)
+
+    # Aguarda a conclusão da inserção
+    job.result()
+
+    logging.info(f"✅ Dados inseridos com sucesso na tabela {dataset_id_raw}.{tabela_id_raw}")
+
+
 
 #endregion
 
@@ -125,15 +145,15 @@ with DAG(
         python_inserir_bigquery = PythonOperator(
             task_id='python_inserir_bigquery',
             python_callable=inserir_no_bigquery,
-            op_kwargs={'dataset_id_raw': variavel_camada_raw, 'tabela_id_raw': variavel_tabela_escrita_raw, 'json_produtos': '{{ task_instance.xcom_pull(task_ids="raw.python_extracao_dados_produtos") }}'}
+            op_kwargs={
+                'dataset_id_raw': variavel_camada_raw, 
+                'tabela_id_raw': variavel_tabela_escrita_raw,
+                'json_produtos': '{{ task_instance.xcom_pull(task_ids="raw.python_extracao_dados_produtos", key="json_produtos") }}'
+            }
         )
-    
+
+        # Fluxo de execução entre as tasks
+        python_extracao_dados_produtos >> python_inserir_bigquery
     #endregion
-
-#endregion
-
-#region Fluxo de tasks
-
-    python_extracao_dados_produtos >> python_inserir_bigquery
 
 #endregion
