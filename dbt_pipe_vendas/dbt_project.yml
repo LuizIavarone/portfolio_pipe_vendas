@@ -31,6 +31,13 @@ clean-targets:         # directories to be removed by `dbt clean`
 # files using the `{{ config(...) }}` macro.
 models:
   dbt_pipe_vendas:
-    # Config indicated by + and applies to all files under models/example/
-    example:
-      +materialized: view
+    raw:
+      +materialized: table  # Esta linha define a camada raw
+    trusted:  # Definindo a camada trusted, que vai conter os dados transformados
+      stg_products:  # Nome do modelo stg_products na camada trusted
+        +materialized: table  # A materialização é uma tabela
+        +partition_by:
+          field: dt_processamento  # Campo de particionamento para a trusted
+          data_type: datetime  # Tipo de dados de particionamento
+        +cluster_by:
+          - category  # Clusterizando os dados pela categoria

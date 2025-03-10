@@ -29,6 +29,7 @@ variavel_camada_raw = env_var["camadas"][0]
 variavel_camada_trusted = env_var["camadas"][1]
 variavel_camada_refined = env_var["camadas"][2]
 variavel_tabela_escrita_raw = env_var["tabela_escrita_raw"]
+variavel_models_trusted = env_var["models_trusted"]
 
 credentials, project = google.auth.load_credentials_from_file(variavel_acesso)
 
@@ -211,17 +212,27 @@ with DAG(
     with TaskGroup("trusted") as trusted:
 
         # Tarefa para executar o DBT após a inserção no BigQuery
-        python_run_dbt = PythonOperator(
-            task_id="python_run_dbt",
-            python_callable=utils.run_dbt,
+        dataquality_tb_raw_products = PythonOperator(
+            task_id="dataquality_tb_raw_products",
+            python_callable=utils.run_dbt_test,
             op_kwargs={
-                'target': variavel_camada_raw,
                 'tabela_teste': variavel_tabela_escrita_raw
             },
             trigger_rule=TriggerRule.ALL_SUCCESS  # Garante que o DBT só será executado se a inserção no BigQuery for bem-sucedida
         )
 
-        python_inserir_bigquery >> python_run_dbt
+        # Tarefa para executar o DBT após a inserção no BigQuery
+        python_run_stg_products = PythonOperator(
+            task_id="python_run_stg_products",
+            python_callable=utils.run_dbt_tranformacao,
+            op_kwargs={
+                'models': variavel_models_trusted,
+                'target': variavel_camada_trusted
+            },
+            trigger_rule=TriggerRule.ALL_SUCCESS  # Garante que o DBT só será executado se a inserção no BigQuery for bem-sucedida
+        )
+
+        python_inserir_bigquery >> dataquality_tb_raw_products >> python_run_stg_products
 
     #endregion
 
