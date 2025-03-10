@@ -34,7 +34,7 @@ credentials, project = google.auth.load_credentials_from_file(variavel_acesso)
 
 # endregion
 
-#region Funcoes para apoio
+#region Funcoes
 
 def extracao_api(caminho_api, **kwargs):
     """
@@ -101,12 +101,24 @@ def inserir_no_bigquery(json_produtos, dataset_id_raw, tabela_id_raw):
 
     # Autenticação com BigQuery
     client = bigquery.Client(credentials=credentials, project=project)
+    
+    ## CAMINHO ESSENCIAL - TRUNCATE (NAO FOI FEITO POR CONTA DO FREE TIER)
+    #query = f"TRUNCATE TABLE `{variavel_camada_raw}.{dataset_id_raw}.{tabela_id_raw}`"
+    #query_job = client.query(query)
+    #query_job.result()
+    #print(f"✅ Tabela {dataset_id_raw}.{tabela_id_raw} truncada com sucesso!")
 
     # Define a referência da tabela
     tabela_ref = client.dataset(dataset_id_raw).table(tabela_id_raw)
 
+    # Configuração do Job para sobrescrever a tabela
+    job_config = bigquery.LoadJobConfig(
+        write_disposition="WRITE_TRUNCATE"  # Sobrescreve a tabela com os novos dados
+    )
+
     # Insere o DataFrame no BigQuery
-    job = client.load_table_from_dataframe(df, tabela_ref)
+    job = client.load_table_from_dataframe(df, tabela_ref, job_config=job_config)
+
 
     # Aguarda a conclusão da inserção
     job.result()
@@ -195,6 +207,22 @@ with DAG(
 
         # Fluxo de execução entre as tasks
         python_extracao_dados_produtos >> python_inserir_bigquery
+    
+    with TaskGroup("trusted") as trusted:
+
+        # Tarefa para executar o DBT após a inserção no BigQuery
+        python_run_dbt = PythonOperator(
+            task_id="python_run_dbt",
+            python_callable=utils.run_dbt,
+            op_kwargs={
+                'target': variavel_camada_raw,
+                'tabela_teste': variavel_tabela_escrita_raw
+            },
+            trigger_rule=TriggerRule.ALL_SUCCESS  # Garante que o DBT só será executado se a inserção no BigQuery for bem-sucedida
+        )
+
+        python_inserir_bigquery >> python_run_dbt
+
     #endregion
 
     #region Slack Notificacao
@@ -219,7 +247,7 @@ with DAG(
 
     #region Fluxo
 
-    inicio_dag >> raw >> [success_task, failure_task] >> fim_dag
+    inicio_dag >> raw >> trusted >> [success_task, failure_task] >> fim_dag
 
     #endregion
 

@@ -1,0 +1,42 @@
+version: 2
+models:
+  - name: tb_raw_products
+    description: "Tabela de produtos extraídos da API"
+    columns:
+      - name: id
+        description: "ID único do produto"
+        tests:
+          - unique  # Teste único para a coluna 'id'
+          - not_null  # Teste não nulo para a coluna 'id'
+      - name: title
+        description: "Título do produto"
+        tests:
+          - not_null  # Teste não nulo para a coluna 'title'
+      - name: price
+        description: "Preço do produto"
+        tests:
+          - not_null  # Teste não nulo para a coluna 'price'
+      - name: description
+        description: "Descrição do produto"
+        tests:
+          - not_null  # Teste não nulo para a coluna 'description'
+      - name: category
+        description: "Categoria do produto"
+        tests:
+          - not_null  # Teste não nulo para a coluna 'category'
+      - name: image
+        description: "Imagem do produto"
+        tests:
+          - not_null  # Teste não nulo para a coluna 'image'
+      - name: rating_rate
+        description: "Taxa de avaliação do produto"
+        tests:
+          - not_null  # Teste não nulo para a coluna 'rating_rate'
+      - name: rating_count
+        description: "Número de avaliações do produto"
+        tests:
+          - not_null  # Teste não nulo para a coluna 'rating_count'
+      - name: dt_processamento
+        description: "Data e hora do processamento"
+        tests:
+          - not_null  # Teste não nulo para a coluna 'dt_processamento'
