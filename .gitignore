@@ -1,1 +1,4 @@
 /acess
+**/__pycache__/
+*.pyc
+*.pyo
